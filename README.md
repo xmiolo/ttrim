@@ -7,7 +7,7 @@ Interceptador de inputs para o **Claude CLI** que comprime prompts e arquivos an
 ## Instalação
 
 ```bash
-git clone https://github.com/seu-user/token-trim
+git clone https://github.com/xmiolo/ttrim
 cd token-trim
 chmod +x install.sh
 ./install.sh
@@ -282,6 +282,8 @@ token-trim/
 
 **Token-Oriented Objettrim Notation** — formato de serialização compattrimo projetado para LLMs. Combina indentação YAML para objetos aninhados com layout tabular CSV para arrays uniformes.
 
+LLMLingua — Microsoft Research — [LLMLingua Series | Effectively Deliver Information to LLMs via Prompt Compression](https://llmlingua.com/)
+LLMLingua paper (arXiv) - [Compressing Prompts for Accelerated Inference of Large Language Models](https://arxiv.org/abs/2310.05736)
 Spec oficial: [github.com/toon-format/toon](https://github.com/toon-format/toon)
 Lib Python: [github.com/toon-format/toon-python](https://github.com/toon-format/toon-python)
 Artigo introdutório (pt-BR): [medium.com/@habbema](https://medium.com/@habbema/toon-o-novo-formato-de-dados-otimizado-para-llms-cbfed80e1e52)
@@ -306,7 +308,6 @@ python3 tests/test_converter.py
 
 ## Roadmap
 
-- [ ] Suporte a `.kt` (Kotlin)
 - [ ] Cache de arquivos já convertidos (hash-based)
 - [ ] Modo `--context` — extrai só métodos relevantes ao prompt via grep semântico
 - [ ] Suporte a múltiplos arquivos via glob (`--file "src/**/*.java"`)

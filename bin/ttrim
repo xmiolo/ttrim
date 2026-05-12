@@ -1,0 +1,207 @@
+#!/usr/bin/env bash
+# ─────────────────────────────────────────────────────────────────────────────
+#  ttrim — Token Trim wrapper
+# ─────────────────────────────────────────────────────────────────────────────
+
+set -euo pipefail
+
+TOON_HOME="${TOKEN_TRIM_HOME:-$HOME/.token-trim}"
+CONVERTER="$TOON_HOME/src/converter.py"
+
+# Script Python de contagem — escrito em arquivo temp para evitar
+# problema de heredoc dentro de subshell $()
+_COUNTER_PY=$(mktemp /tmp/ttrim_counter_XXXX.py)
+cat > "$_COUNTER_PY" << 'PYEOF'
+import sys, re
+text = sys.argv[1]
+try:
+    import tiktoken
+    enc = tiktoken.get_encoding("cl100k_base")
+    print(len(enc.encode(text)))
+except Exception:
+    print(len(re.findall(r'\w+|[^\w\s]', text)))
+PYEOF
+trap 'rm -f "$_COUNTER_PY"' EXIT
+
+# ── helpers ───────────────────────────────────────────────────────────────────
+
+_warn() { echo "  ⚠️  [ttrim] $*" >&2; }
+_dbg()  { [[ -n "${ttrim_DEBUG:-}" ]] && echo "  🔍 [ttrim] $*" >&2 || true; }
+
+_require_python() {
+    command -v python3 &>/dev/null || { _warn "python3 não encontrado."; return 1; }
+}
+
+_count_tokens() {
+    python3 "$_COUNTER_PY" "$1" 2>/dev/null || echo "0"
+}
+
+_convert_prompt() {
+    _require_python && python3 "$CONVERTER" prompt "$1" 2>/dev/null || echo "$1"
+}
+
+_convert_file() {
+    [[ ! -f "$1" ]] && { _warn "arquivo não encontrado: $1"; return 1; }
+    _require_python && python3 "$CONVERTER" file "$1" 2>/dev/null || cat "$1"
+}
+
+_convert_diff() {
+    _require_python && python3 "$CONVERTER" diff "$1" 2>/dev/null || cat "$1"
+}
+
+_print_stats() {
+    local original="$1"
+    local toon="$2"
+    local t_orig t_toon saved pttrim
+
+    t_orig=$(_count_tokens "$original")
+    t_toon=$(_count_tokens "$toon")
+    saved=$(( t_orig - t_toon ))
+    pttrim=$(python3 -c "print(f'{$saved / $t_orig * 100:.1f}' if $t_orig > 0 else '0')" 2>/dev/null || echo "?")
+
+    echo "" >&2
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+    echo "  TOKEN STATS" >&2
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+    echo "  original : $t_orig tokens" >&2
+    echo "  toon     : $t_toon tokens" >&2
+    echo "  economia : $saved tokens (${pttrim}%)" >&2
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+    echo "" >&2
+}
+
+# ── parse de argumentos ───────────────────────────────────────────────────────
+
+PROMPT=""
+FILES=()
+DIFF_SOURCE=""
+CLAUDE_ARGS=()
+PASS_THROUGH=false
+SHOW_STATS=false
+TOON_PARTS=()
+ORIGINAL_PARTS=()
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --file|-f)
+            FILES+=("$2"); shift 2 ;;
+        --diff|-d)
+            if [[ "${2:-}" == "" || "${2:-}" == -* ]]; then
+                DIFF_SOURCE="__git__"
+            else
+                DIFF_SOURCE="$2"; shift
+            fi
+            shift ;;
+        --stats|-s)
+            SHOW_STATS=true; shift ;;
+        --no-toon)
+            PASS_THROUGH=true; shift ;;
+        --help|-h)
+            cat <<'EOF'
+ttrim — Token Trim: comprime inputs para TOON antes de enviar ao Claude Code
+
+USO:
+  ttrim "seu prompt"
+  ttrim "prompt" --file Arquivo.java
+  ttrim "prompt" --file A.java --file B.ts
+  ttrim "review" --diff
+  ttrim "review" --diff meu.patch
+
+FLAGS:
+  --stats / -s        mostra tokens original vs TOON
+  --no-toon           passa direto ao claude sem converter
+  --help / -h         esta mensagem
+
+VARIÁVEIS DE AMBIENTE:
+  ttrim_DEBUG=1          exibe o TOON gerado antes de enviar
+  ttrim_DRY_RUN=1        mostra output mas NÃO chama o claude
+
+EXEMPLOS:
+  ttrim_DRY_RUN=1 ttrim "review" --file OrderService.java --stats
+  ttrim "review" --diff --stats
+  ttrim_DEBUG=1 ttrim "teste" --file algo.ts
+EOF
+            exit 0 ;;
+        -*)
+            CLAUDE_ARGS+=("$1")
+            if [[ "${2:-}" != "" && "${2:-}" != -* ]]; then
+                CLAUDE_ARGS+=("$2"); shift
+            fi
+            shift ;;
+        *)
+            PROMPT="$1"; shift ;;
+    esac
+done
+
+# ── pass-through ──────────────────────────────────────────────────────────────
+
+if [[ "$PASS_THROUGH" == true ]]; then
+    exec claude "${CLAUDE_ARGS[@]}" "$PROMPT"
+fi
+
+# ── conversões ────────────────────────────────────────────────────────────────
+
+if [[ -n "$PROMPT" ]]; then
+    ORIGINAL_PARTS+=("$PROMPT")
+    COMPRESSED=$(_convert_prompt "$PROMPT")
+    _dbg "prompt comprimido: $COMPRESSED"
+    TOON_PARTS+=("$COMPRESSED")
+fi
+
+for f in "${FILES[@]}"; do
+    _dbg "convertendo arquivo: $f"
+    ORIGINAL_PARTS+=("$(cat "$f" 2>/dev/null || echo '')")
+    TOON=$(_convert_file "$f") && TOON_PARTS+=("$TOON") || true
+done
+
+if [[ -n "$DIFF_SOURCE" ]]; then
+    if [[ "$DIFF_SOURCE" == "__git__" ]]; then
+        RAW_DIFF=$(git diff HEAD 2>/dev/null || git diff 2>/dev/null || echo "")
+        [[ -z "$RAW_DIFF" ]] && RAW_DIFF=$(git diff --cached 2>/dev/null || echo "")
+        if [[ -n "$RAW_DIFF" ]]; then
+            ORIGINAL_PARTS+=("$RAW_DIFF")
+            TOON=$(echo "$RAW_DIFF" | python3 "$CONVERTER" diff -)
+            TOON_PARTS+=("$TOON")
+        else
+            _warn "nenhum diff encontrado"
+        fi
+    else
+        ORIGINAL_PARTS+=("$(cat "$DIFF_SOURCE")")
+        TOON=$(_convert_diff "$DIFF_SOURCE")
+        TOON_PARTS+=("$TOON")
+    fi
+fi
+
+if [[ ${#TOON_PARTS[@]} -eq 0 ]]; then
+    _warn "nenhum input para converter. Use: ttrim --help"
+    exit 1
+fi
+
+FINAL_PROMPT=$(printf '%s\n\n' "${TOON_PARTS[@]}" | sed '${/^$/d}')
+ORIGINAL_ALL=$(printf '%s\n\n' "${ORIGINAL_PARTS[@]}" | sed '${/^$/d}')
+
+# ── stats ─────────────────────────────────────────────────────────────────────
+
+if [[ "$SHOW_STATS" == true || -n "${ttrim_DRY_RUN:-}" || -n "${ttrim_DEBUG:-}" ]]; then
+    _print_stats "$ORIGINAL_ALL" "$FINAL_PROMPT"
+fi
+
+# ── toon output (debug/dry-run) ───────────────────────────────────────────────
+
+if [[ -n "${ttrim_DEBUG:-}" || -n "${ttrim_DRY_RUN:-}" ]]; then
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+    echo "  TOON OUTPUT" >&2
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+    echo "$FINAL_PROMPT" >&2
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+    echo "" >&2
+fi
+
+if [[ -n "${ttrim_DRY_RUN:-}" ]]; then
+    echo "  [ttrim] dry-run: claude NÃO foi chamado" >&2
+    exit 0
+fi
+
+# ── chama o claude ────────────────────────────────────────────────────────────
+
+exec claude "${CLAUDE_ARGS[@]}" "$FINAL_PROMPT"

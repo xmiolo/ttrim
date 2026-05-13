@@ -107,6 +107,22 @@ if [[ -d "$HOME/.claude" ]]; then
       || true
 fi
 
+# ── hooks do Claude Code ──────────────────────────────────────────────────────
+
+info "configurando hooks do Claude Code..."
+
+chmod +x "$REPO_DIR/.claude/hooks/compress_md.py" 2>/dev/null || true
+chmod +x "$REPO_DIR/.claude/hooks/detect_flags.sh" 2>/dev/null || true
+ok "hooks configurados (.claude/settings.json)"
+
+# jq melhora a detecção de flags — instala se ausente
+if ! command -v jq &>/dev/null; then
+    warn "jq não encontrado — detecção de flags usará fallback Python (funcional, mas mais lento)"
+    warn "  instale com: sudo apt install jq  ou  brew install jq"
+else
+    ok "jq: $(jq --version)"
+fi
+
 # ── testa a instalação ────────────────────────────────────────────────────────
 
 info "testando conversor..."

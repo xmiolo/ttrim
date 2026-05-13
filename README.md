@@ -306,8 +306,62 @@ python3 tests/test_converter.py
 
 ---
 
+---
+
+## Hook automático no Claude Code (`@arquivo.md`)
+
+Além do CLI `ttrim`, o projeto inclui hooks que comprimem arquivos `.md` **automaticamente** quando você os referencia com `@` dentro do Claude Code — sem precisar chamar `ttrim` explicitamente.
+
+### Como funciona
+
+```
+você digita: @bug-report.md explica o problema
+                   ↓
+    PreToolUse hook intercepta o Read
+                   ↓
+    md_compress.compress() processa o arquivo
+                   ↓
+    Claude lê a versão comprimida (~57% menos tokens)
+```
+
+### Flags inline
+
+Adicione ao final da sua mensagem:
+
+| Flag | Efeito |
+|---|---|
+| `--no-compress` | Bypass — Claude lê o arquivo original |
+| `--metrics` | Exibe tokens economizados no banner do Claude Code |
+
+**Exemplos:**
+
+```
+@user-story.md implemente essa US  --metrics
+@bug-report.md aplica o fix  --no-compress
+```
+
+### Variáveis de ambiente (alternativa)
+
+```bash
+TTRIM_NO_COMPRESS=1 claude      # bypass para toda a sessão
+TTRIM_METRICS=on claude        # stats para toda a sessão
+```
+
+### Arquivos do hook
+
+```
+.claude/
+├── settings.json               # configuração dos hooks
+└── hooks/
+    ├── compress_md.py          # PreToolUse: redireciona leitura de .md
+    └── detect_flags.sh         # UserPromptSubmit: detecta --no-compress e --metrics
+```
+
+---
+
 ## Roadmap
 
 - [ ] Cache de arquivos já convertidos (hash-based)
 - [ ] Modo `--context` — extrai só métodos relevantes ao prompt via grep semântico
 - [ ] Suporte a múltiplos arquivos via glob (`--file "src/**/*.java"`)
+- [ ] Hook para `.json` e `.java` / `.ts` (além de `.md`)

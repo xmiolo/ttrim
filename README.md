@@ -1,8 +1,6 @@
 # token-trim
 
-Interceptador de inputs para o **Claude CLI** que comprime prompts e arquivos antes de enviar ao modelo — reduzindo custo de tokens em 30–85% dependendo do tipo de arquivo.
-
----
+Hooks para o **Claude Code** que comprimem prompts e arquivos automaticamente antes de enviar ao modelo — reduzindo custo de tokens em 30–85% dependendo do tipo de arquivo.
 
 ## Instalação
 
@@ -17,60 +15,60 @@ source ~/.zshrc   # ou ~/.bashrc
 O installer faz automaticamente:
 - Instala as dependências Python (`toon-python`, `tiktoken`)
 - Copia os arquivos para `~/.token-trim/`
-- Instala o binário `ttrim` em `~/.local/bin/`
 - Adiciona `TOKEN_TRIM_HOME` ao seu shell rc
-- Garante `~/.local/bin` no PATH
 - Instala o slash command `/toon` no Claude Code (se disponível)
+- Configura os hooks no `.claude/settings.json` do projeto
 
----
+## Como funciona
 
-## Uso
+O token-trim atua como **pre-hook do Claude Code** — intercepta inputs antes de enviá-los ao modelo, sem necessidade de nenhum comando especial.
 
-```bash
-# Prompt simples (comprime polidez e verbosidade)
-ttrim "por favor me explica como funciona esse service"
+### Hook de arquivos `@arquivo.md`
 
-# Com arquivo Java
-ttrim "review dessa implementação" --file OrderService.java
+Quando você referencia um arquivo `.md` com `@` dentro do Claude Code, o hook comprime automaticamente:
 
-# Com múltiplos arquivos (tipos mistos)
-ttrim "tem acoplamento aqui?" --file OrderService.java --file PaymentService.java
-
-# Com arquivo Markdown (bug report, US, ADR)
-ttrim "aplica esse fix" --file Invalid_fix.md
-
-# Com diff do git
-ttrim "review do que mudei" --diff
-
-# Com arquivo de patch específico
-ttrim "analisa esse diff" --diff meu.patch
-
-# Ver tokens economizados sem chamar o claude
-ttrim_DRY_RUN=1 ttrim "review" --file OrderService.java --stats
-
-# Sem conversão (passa direto ao claude)
-ttrim --no-toon "prompt literal"
+```
+você digita: @bug-report.md explica o problema
+                   ↓
+    PreToolUse hook intercepta o Read
+                   ↓
+    md_compress.compress() processa o arquivo
+                   ↓
+    Claude lê a versão comprimida (~57% menos tokens)
 ```
 
-### Flags
+### Hook de prompt (UserPromptSubmit)
 
-| Flag | Descrição |
+O prompt em si também é limpo automaticamente antes de ser enviado — verbosidade e polidez são removidas. Veja detalhes na seção [Prompt → limpeza de verbosidade](#prompt--limpeza-de-verbosidade).
+
+### Flags inline
+
+Adicione ao final da sua mensagem:
+
+| Flag | Efeito |
 |---|---|
-| `--file / -f` | Arquivo a converter (pode repetir para múltiplos) |
-| `--diff / -d` | Git diff do HEAD (ou caminho para arquivo `.patch`) |
-| `--stats / -s` | Exibe tokens original vs comprimido |
-| `--no-toon` | Passa direto ao claude sem conversão |
-| `--help / -h` | Ajuda |
+| `--no-compress` | Bypass — Claude lê o arquivo original |
+| `--metrics` | Exibe tokens economizados no banner do Claude Code |
+
+**Exemplos:**
+
+```
+@user-story.md implemente essa US  --metrics
+@bug-report.md aplica o fix  --no-compress
+```
 
 ### Variáveis de ambiente
 
 | Variável | Descrição |
 |---|---|
-| `ttrim_DEBUG=1` | Exibe o output comprimido antes de enviar |
-| `ttrim_DRY_RUN=1` | Não chama o claude (só mostra o output) |
+| `TTRIM_NO_COMPRESS=1` | Bypass para toda a sessão |
+| `TTRIM_METRICS=on` | Stats para toda a sessão |
 | `TOKEN_TRIM_HOME` | Caminho alternativo para a instalação |
 
----
+```bash
+TTRIM_NO_COMPRESS=1 claude      # bypass para toda a sessão
+TTRIM_METRICS=on claude        # stats para toda a sessão
+```
 
 ## Como funciona por tipo de arquivo
 
@@ -211,8 +209,8 @@ O que **nunca é removido**: root cause, code blocks, file paths, line numbers, 
 
 **Exemplo real** (`Invalid_fix.md`, 2059 tokens → 888 tokens, economia de 57%):
 
-```bash
-ttrim_DRY_RUN=1 ttrim "aplica esse fix" --file Invalid_fix.md --stats
+```
+@Invalid_fix.md aplica esse fix  --metrics
 
 # TOKEN STATS
 # original  : 2059 tokens
@@ -263,8 +261,6 @@ diff_toon[2files]:
 
 ```
 token-trim/
-├── bin/
-│   └── ttrim                    # comando principal (shell wrapper)
 ├── src/
 │   ├── converter.py          # lógica de conversão: TOON, extração Java/TS, diff
 │   └── md_compress.py        # compressão estrutural de Markdown (offline)
@@ -272,6 +268,11 @@ token-trim/
 │   └── test_converter.py     # 28 testes unitários
 ├── claude-commands/
 │   └── toon.md               # slash command /toon para Claude Code
+├── .claude/
+│   ├── settings.json               # configuração dos hooks
+│   └── hooks/
+│       ├── compress_md.py          # PreToolUse: redireciona leitura de .md
+│       └── detect_flags.sh         # UserPromptSubmit: detecta --no-compress e --metrics
 ├── install.sh                # instalador com auto-detecção de shell
 └── README.md
 ```
@@ -305,57 +306,6 @@ python3 tests/test_converter.py
 ```
 
 ---
-
----
-
-## Hook automático no Claude Code (`@arquivo.md`)
-
-Além do CLI `ttrim`, o projeto inclui hooks que comprimem arquivos `.md` **automaticamente** quando você os referencia com `@` dentro do Claude Code — sem precisar chamar `ttrim` explicitamente.
-
-### Como funciona
-
-```
-você digita: @bug-report.md explica o problema
-                   ↓
-    PreToolUse hook intercepta o Read
-                   ↓
-    md_compress.compress() processa o arquivo
-                   ↓
-    Claude lê a versão comprimida (~57% menos tokens)
-```
-
-### Flags inline
-
-Adicione ao final da sua mensagem:
-
-| Flag | Efeito |
-|---|---|
-| `--no-compress` | Bypass — Claude lê o arquivo original |
-| `--metrics` | Exibe tokens economizados no banner do Claude Code |
-
-**Exemplos:**
-
-```
-@user-story.md implemente essa US  --metrics
-@bug-report.md aplica o fix  --no-compress
-```
-
-### Variáveis de ambiente (alternativa)
-
-```bash
-TTRIM_NO_COMPRESS=1 claude      # bypass para toda a sessão
-TTRIM_METRICS=on claude        # stats para toda a sessão
-```
-
-### Arquivos do hook
-
-```
-.claude/
-├── settings.json               # configuração dos hooks
-└── hooks/
-    ├── compress_md.py          # PreToolUse: redireciona leitura de .md
-    └── detect_flags.sh         # UserPromptSubmit: detecta --no-compress e --metrics
-```
 
 ---
 
